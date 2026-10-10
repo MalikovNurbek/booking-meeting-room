@@ -1,262 +1,221 @@
-# Meeting Room Booking
+# Бронирование переговорной
 
-A booking interface for a single meeting room over a 09:00–18:00 working day.
+Интерфейс бронирования одной переговорной на рабочий день 09:00–18:00.
 
-- **Demo:** _link to be added after deploy_
-- **Stack:** Nuxt 4 · Vue 3 · TypeScript (strict) · Nuxt UI 4 · TanStack Query · Valibot · `@internationalized/date` · Vitest
+- **Демо:** _ссылка после деплоя_
+- **Стек:** Nuxt 4 · Vue 3 · TypeScript (strict) · Nuxt UI 4 · TanStack Query · Valibot · `@internationalized/date` · Vitest
 
-## Getting started
+## Запуск
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-The app starts on `http://localhost:3000`. Requires Node ≥ 22 and pnpm ≥ 10.
+Приложение поднимется на `http://localhost:3000`. Нужны Node ≥ 22 и pnpm ≥ 10.
 
 ```bash
-pnpm test        # 193 tests: domain, schemas, API handlers, utils, components
-pnpm typecheck   # vue-tsc, strict — covers tests too
+pnpm test        # 193 теста: домен, схемы, API-ручки, утилиты, компоненты
+pnpm typecheck   # vue-tsc, strict — включая тесты
 pnpm lint        # eslint --fix
-pnpm build       # production build
+pnpm build       # продакшн-сборка
 ```
 
-Environment variables live in `.env.example`. There is exactly one setting:
-`MOCK_LATENCY_MS` (artificial mock API delay, 250 ms by default so loading
-states stay visible; `0` disables it).
+Единственная настройка — `MOCK_LATENCY_MS` в `.env.example`: искусственная
+задержка mock API, 250 мс по умолчанию, чтобы состояния загрузки были видимы.
 
-## What is implemented
+## Приоритеты
 
-Every point of the brief is covered: picking a date, viewing, creating,
-editing and deleting bookings, all eight business rules, and handling of
-server-side conflicts.
+Таймбокс 4–6 часов, поэтому по порядку: сначала **основной функционал**
+(просмотр, создание, редактирование, удаление), затем **конфликт при
+одновременном бронировании** — в ТЗ это отдельный пункт и самое сложное место.
+Всё остальное — после.
 
-### Architecture
+## Архитектура
 
 ```
-shared/          code shared by client and server (the #shared alias)
-  domain/        business rules, time handling, "now"
-  schemas/       valibot schemas for parsing input
-  types/         Booking, API error body
+shared/          общий код клиента и сервера (алиас #shared)
+  domain/        бизнес-правила, работа со временем, «сейчас»
+  schemas/       valibot-схемы разбора входных данных
+  types/         Booking, тело ошибки API
 server/
   api/bookings/  GET · POST · PATCH · DELETE
-  utils/         in-memory store, errors, artificial latency
+  utils/         in-memory store, ошибки, искусственная задержка
 app/
-  api/           BookingsApi — the only place that knows about HTTP
+  api/           BookingsApi — единственное место, где есть HTTP
   composables/   useBookings (TanStack Query), useNowContext
-  components/    day timeline, form, day view
-  utils/         timeline layout, time options, request payload, formatting
+  components/    таймлайн дня, форма, представление дня
+  utils/         раскладка таймлайна, варианты времени, форматирование
 tests/
-  unit/          pure functions (node environment)
-  server/        API handlers through a real h3 router
-  nuxt/          components (nuxt environment)
+  unit/          чистые функции
+  server/        API-ручки через настоящий h3-роутер
+  nuxt/          компоненты
 ```
 
-Three decisions everything else rests on:
+Три решения, на которых держится остальное:
 
-**1. Business rules live in one place.** `shared/domain/booking-rules.ts`
-exports a pure `validateBooking(draft, { bookings, now, ignoreId, originalStart })`
-that returns a list of violations. Both the form (before submitting) and every
-API handler (as the final authority) call it. The rules are not duplicated, so
-client and server cannot drift apart in how they read them.
+**1. Бизнес-правила в одном месте.** Чистая `validateBooking(draft, options)` в
+`shared/domain/booking-rules.ts` возвращает список нарушений. Её вызывает и
+форма до отправки, и каждая серверная ручка как последняя инстанция — правила не
+продублированы, клиент и сервер не могут разойтись в трактовке.
 
-**2. Time is whole minutes since midnight.** `HH:mm` strings live only at the
-boundaries: user input and the HTTP contract. Inside the domain `'09:30'` is
-`570`, and every rule reduces to comparing numbers. Time zones and day
-rollovers disappear from the business logic entirely.
+**2. Время — целые минуты от полуночи.** Строки `HH:mm` живут только на
+границах: ввод и HTTP-контракт. Внутри домена `'09:30'` — это `570`, и все
+правила сводятся к сравнению чисел. Часовые пояса уходят из бизнес-логики.
 
-**3. The room has one business time zone** (`Asia/Bishkek`). The "no booking in
-the past" rule is checked on both sides; deriving it from each process's local
-time would make "today" a different date on the host (UTC) and for the user
-(UTC+6). Both sides convert the current moment through `nowContext()`.
+**3. Одна бизнес-таймзона** (`Asia/Bishkek`). Считать «прошедшее время» от
+локального времени процесса нельзя: на хостинге (UTC) и у пользователя (UTC+6)
+«сегодня» — разные даты. Обе стороны приводят момент к одной зоне.
 
-### On the date library
+Из решения №2 календарной логики осталось три места, и для них взят
+`@internationalized/date`, а не dayjs: он уже есть в дереве как dependency
+самого Nuxt UI, `parseDate` строгий (сам отсекает `2026-02-31`), нет глобальных
+плагинов с побочными эффектами. Цена — 4.3 kB gzip после tree-shaking.
 
-Because of decision #2, calendar logic occupies only three places: date
-validity, shifting by a day, and converting a moment into the business time
-zone. Everything else — overlaps, durations, the slot grid, comparisons — is
-integer arithmetic that no library can improve.
+## Бизнес-правила
 
-For those three places the choice is **`@internationalized/date`** rather than
-dayjs or date-fns:
+| Правило ТЗ                           | Ответ                             |
+| ------------------------------------ | --------------------------------- |
+| 1. В пределах 09:00–18:00            | 422 `OUTSIDE_WORK_DAY`            |
+| 2. `start < end`                     | 422 `START_NOT_BEFORE_END`        |
+| 3. Минимум 30 минут                  | 422 `TOO_SHORT`                   |
+| 4. Максимум 2 часа                   | 422 `TOO_LONG`                    |
+| 5. Без пересечений                   | 409 `OVERLAP`                     |
+| 5a. Касание границ — не конфликт     | 10:00–11:00 и 11:00–12:00 валидны |
+| 6. Нельзя бронировать прошедшее      | 422 `PAST_DATE` / `PAST_TIME`     |
+| 7. Бронь не конфликтует сама с собой | PATCH того же интервала проходит  |
+| 8. Серверный конфликт                | 409 без потери ввода, см. ниже    |
+| Шаг 15 минут                         | 422 `UNALIGNED_TIME`              |
 
-- it is already in the dependency tree as a dependency of Nuxt UI itself, so
-  this is not a new vendor in the project but the same date library the UI kit
-  runs on;
-- `parseDate` is strict — it rejects `2026-02-31` and `2026-1-1` on its own, so
-  no hand-written existence check is needed;
-- there are no global side-effect plugins (`dayjs.extend`) to initialise before
-  first use on both the client and the server;
-- if the native `input[type=date]` is ever replaced with `UCalendar`, it takes
-  exactly these types, so no conversion layer appears.
+Порядок ошибок неслучаен: сначала ошибки ввода (422), и только если черновик
+корректен сам по себе — конфликт с чужими бронями (409). Иначе на «14:00–14:15 в
+занятое время» пришло бы «слот занят» вместо настоящей причины.
 
-Cost: **4.3 kB gzip** after tree-shaking (measured with esbuild on the
-functions actually used). Gain: 40 lines fewer and, more importantly, a
-`clock.ts` that is obvious instead of assembling a date by hand out of
-`Intl.DateTimeFormat.formatToParts`.
+## Конфликт 409
 
-### Business rules
+Воспроизводится руками, двумя вкладками:
 
-| Rule from the brief                    | Checked in          | Behaviour                              |
-| -------------------------------------- | ------------------- | -------------------------------------- |
-| 1. Within 09:00–18:00                  | domain              | 422 `OUTSIDE_WORK_DAY`                 |
-| 2. `start < end`                       | domain              | 422 `START_NOT_BEFORE_END`             |
-| 3. At least 30 minutes                 | domain              | 422 `TOO_SHORT`                        |
-| 4. At most 2 hours                     | domain              | 422 `TOO_LONG`                         |
-| 5. No overlaps                         | domain              | 409 `OVERLAP`                          |
-| 5a. Touching boundaries is fine        | domain              | 10:00–11:00 and 11:00–12:00 both valid |
-| 6. No booking in the past              | domain              | 422 `PAST_DATE` / `PAST_TIME`          |
-| 7. A booking never clashes with itself | domain (`ignoreId`) | PATCH to the same interval succeeds    |
-| 8. Server-side conflict                | handlers + UI       | see below                              |
-| 15-minute step                         | domain              | 422 `UNALIGNED_TIME`                   |
+1. Открыть приложение в двух вкладках на одной дате.
+2. Во вкладке B забронировать свободный слот.
+3. Во вкладке A — **не перезагружая** — забронировать тот же слот.
+4. Вкладка A считает слот свободным, запрос уходит, сервер отвечает 409.
 
-The error priority is deliberate: input errors come first (422), and a clash
-with someone else's booking (409) is reported only if the draft is valid on its
-own. Otherwise a request for "14:00–14:15 in a taken slot" would answer "slot
-taken" instead of the real reason — the booking is too short.
+Работает потому, что `refetchOnWindowFocus` намеренно **выключен**: с ним
+возврат во вкладку A тихо подтянул бы свежий список и конфликт нельзя было бы
+увидеть вручную.
 
-### Handling the 409 conflict
+Получив 409, UI не закрывает модалку и сохраняет введённые данные, называет в
+алерте конкретную конфликтующую бронь, помечает поле «Начало» и перезапрашивает
+список — чужая бронь сразу видна и в таймлайне, и в выпадающих списках.
 
-Rule 8 is reproducible by hand, with two browser tabs and no special mode:
+Симуляции конфликта в приложении нет: ТЗ её не требует, а устаревшая вкладка
+демонстрирует тот же путь честнее синтетического тумблера.
 
-1. Open the app in two tabs, both on the same date.
-2. In tab B, book a free slot.
-3. Switch to tab A — **do not reload** — and book the same slot.
-4. Tab A still believes the slot is free, so the request goes out and the
-   server answers 409.
+Эту задачу можно было решить и постоянным соединением (WebSocket/SSE): сервер
+сам рассылал бы изменения, и вторая вкладка узнала бы о чужой брони до отправки
+формы. ТЗ этого не требовало. И это не отменяет обработку 409 — соединение
+сужает окно гонки, но не закрывает его: связь может оборваться, а сервер в любом
+случае остаётся последней инстанцией.
 
-This works because `refetchOnWindowFocus` is deliberately turned **off** in
-`app/plugins/vue-query.ts`. With it on, returning to tab A would quietly
-refetch and repair the stale list, and the conflict could never be observed by
-hand. Switching it off keeps tab A genuinely stale, which is exactly the
-situation the rule describes.
+## Состояния интерфейса и доступность
 
-What the UI does on a 409:
+Загрузка, пустой день, ошибка загрузки с «Повторить», отправка формы,
+подтверждение удаления, тосты. Отдельно — прошедшая дата, закончившийся рабочий
+день и «после выбранного начала не осталось свободного времени». Удаление уже
+удалённой брони (404) трактуется как успех. Нативный `input[type=date]` отдаёт
+пустую строку на незаконченном вводе, поэтому сырой ввод хранится отдельно от
+даты, на которой построен экран.
 
-- the modal **stays open** and the typed data survives;
-- an alert states exactly which booking the request clashes with;
-- the "Start" field is marked with an error;
-- the booking list is refetched — the booking from tab B is immediately
-  visible both in the timeline and in the time dropdowns, where the slot
-  becomes unavailable.
+Таймлайн — список `<li>` в хронологическом порядке, обход с клавиатуры идёт
+сверху вниз без ручного `tabindex`. Свободный слот — настоящая `<button>` с
+осмысленным `aria-label`, недоступные `disabled`. Модалки и фокус-ловушка — Nuxt
+UI (Reka UI). Проверено на 375px и на десктопе.
 
-No conflict simulation is built into the app: the brief does not ask for one,
-and a real stale tab demonstrates the same path more honestly than a synthetic
-switch would.
+Форма не даёт выбрать невозможное: прошедшие и занятые слоты отключены, список
+окончания ограничен длительностью, концом дня и началом следующей брони.
+Валидацию это не заменяет — домен и сервер проверяют всё заново.
 
-### Interface states
+## Про бэкенд
 
-Loading (skeleton), an empty day, a load error with a "Retry" button, form
-submission (button and grid locked), delete confirmation, success toasts.
-A past date, a finished working day and the "no free time left after this
-start" case are all handled separately. Deleting a booking that is already gone
-(404) is treated as success: the user's goal has been achieved.
-
-A native `input[type=date]` reports an empty string while the date is only
-partly typed, and keeps it if the field is cleared. So the raw input is stored
-separately from the date the screen is built on: the day only switches on a
-valid value, and an empty field neither breaks formatting nor loses the day
-currently shown.
-
-### Accessibility and responsiveness
-
-- The timeline is a list of `<li>` items in chronological order, so keyboard
-  traversal runs top to bottom with no manual `tabindex`.
-- Every free slot is a real `<button>` with a meaningful `aria-label`
-  ("Book from 14:15", "09:15 — time has passed", "17:45 — slot too short");
-  unavailable slots are `disabled`.
-- Booking actions are buttons whose `aria-label` includes the booking time.
-- Modals, focus trapping and aria wiring come from Nuxt UI (Reka UI).
-- Layout verified at 375 px and on desktop.
-
-The form never offers something that cannot work: past and taken slots are
-disabled, and the list of end times is capped by the maximum duration, the end
-of the working day and the start of the next booking. This does not replace
-validation — the domain and the server still re-check everything.
-
-## About the backend
-
-There is no real backend, exactly as the brief allows. There is a **mock API on
-Nitro** (Nuxt's server side) with an in-memory store — that is, real HTTP, real
-status codes and real server-side validation, but no database.
+Реального бэкенда нет, как и разрешает ТЗ. Есть **mock API на Nitro** с
+хранилищем в памяти процесса: настоящий HTTP, настоящие коды и серверная
+валидация, но без БД.
 
 ```
 GET    /api/bookings?date=YYYY-MM-DD   → Booking[]
 POST   /api/bookings                   → Booking (201)
 PATCH  /api/bookings/:id               → Booking
 DELETE /api/bookings/:id               → 204
-POST   /api/dev/reset                  → reset to seed data (demo and e2e)
+POST   /api/dev/reset                  → сброс к сид-данным (демо и e2e)
 ```
 
-The error body is identical across all handlers:
+Тело ошибки одинаково у всех ручек: `{ code, message, violations?, fields? }`.
+MSW сознательно не использован: service worker исполняет «сервер» в браузере, и
+история про конфликт со стороны сервера становится постановочной.
 
-```ts
-{ code: 'OVERLAP' | 'TOO_SHORT' | 'NOT_FOUND' | …, message: string,
-  violations?: Violation[], fields?: Record<string, string[]> }
-```
+**Сетевой слой отделён от UI**: компоненты работают с интерфейсом `BookingsApi`
+и не знают про `$fetch`. Переход на реальный бэкенд — другая реализация того же
+интерфейса, компоненты не меняются.
 
-MSW was deliberately not used: a service worker runs the "server" inside the
-browser, which turns the story about a conflict arriving from the server into a
-staged one. With Nitro it is a genuine network request with a genuine 409,
-visible in DevTools.
+Состояние живёт в памяти процесса: на serverless холодный старт после простоя
+вернёт сид — ожидаемое поведение mock API.
 
-**The network layer is separated from the UI.** Components know nothing about
-`$fetch` — they work with the `BookingsApi` interface
-(`app/api/bookingsApi.ts`). Moving to a real backend means another
-implementation of the same interface (or another `fetcher` passed to the
-`createHttpBookingsApi` factory); components do not change.
+## Решения по неоднозначностям
 
-State lives in the process memory and resets to the seed data on restart. On
-serverless hosting (Vercel) that means a cold start after an idle period
-returns the seed — expected behaviour for a mock API.
+- **Переговорная одна** — в контракте нет `roomId`, модель не усложнялась.
+- **Шаг сетки 15 минут** при минимальной длительности 30.
+- **Начавшуюся бронь можно редактировать и удалять.** Правка разрешена, пока
+  бронь остаётся на своей дате и не меняется начало; перенести начало в прошлое
+  нельзя. Удаление прошедшим временем не ограничено.
+- **Бронь без названия** показывается как «Untitled»; пустая строка
+  нормализуется в отсутствующее поле.
 
-## Decisions on ambiguous points
+Решено самостоятельно: таймлайн дня как формат отображения (сам визуализирует
+пересечения и недоступные слоты); нативный `<input type="date">` вместо
+библиотечного календаря; коды 409 только для пересечения, 422 для остальных
+нарушений, 404 для несуществующей брони.
 
-Clarified with the client:
+## Что дальше
 
-- **There is one room.** The contract has no `roomId`, so the model was not
-  complicated for it.
-- **The grid step is 15 minutes**, with a 30-minute minimum duration.
-- **A booking that already started can be edited and deleted.** Implemented as:
-  editing is allowed while the start time does not move (`originalStart`);
-  moving the start into the past, or pushing the whole booking into the past,
-  is not. Deleting is not restricted by past time at all — removing a meeting
-  that already happened is a valid action.
-- **A booking without a title** is shown as "Untitled"; an empty string is
-  normalised into an absent field rather than stored as `''`.
+**Инженерные долги** — в порядке ценности:
 
-Decided independently:
+1. **Playwright e2e** на сценарий с двумя вкладками — единственная дыра в
+   пирамиде тестов, сейчас он проверен руками.
+2. **Схлопнуть `ignoreId` и `original`** в один `editing?: Booking`: сейчас это
+   два поля, обязанные быть согласованными.
+3. **Персистентность стора** для демо (`unstorage` + KV), чтобы холодный старт
+   не стирал данные проверяющего; интерфейс стора не меняется.
+4. **Транзакционность при переезде на БД.** Сейчас гонок нет: валидация и запись
+   стоят синхронными соседями. Гарантия держится только на том, что стор
+   синхронный и в одном процессе — с реальной БД проверку пересечений надо
+   переносить в транзакцию или в ограничение схемы.
+5. **Доступность измерить, а не только спроектировать** — axe и скринридер.
 
-- The display format is a **day timeline**: it visualises overlaps, occupancy
-  and unavailable slots by itself, which makes the business logic visible.
-- Date selection uses a native `<input type="date">`: keyboard accessible,
-  familiar, and it avoids pulling in a calendar dependency for a single field.
-- Status codes: 409 only for an overlap, 422 for other violations, 404 for a
-  booking that does not exist.
+**Развитие продукта:**
 
-## What I would do next
+6. **Выбор интервала удержанием и протягиванием** по таймлайну вместо клика —
+   делается готовыми библиотеками.
+7. **Авторизация:** свой аккаунт у каждого, видно, кто забронировал (показывать
+   опционально).
+8. **Приглашение участников с напоминаниями** — продолжение аккаунтов.
+9. **Отмена вместо удаления, с историей и причиной.** Сейчас бронь исчезает
+   бесследно, и из данных не понять, почему встречу перенесли на более позднее
+   время.
+10. **Подсказка ближайшего свободного слота при 409** — превращает ошибку в путь
+    восстановления, функция поиска слота уже есть.
+12. **Повторяющиеся брони** (еженедельный стендап).
 
-In descending order of value:
+Расширение за пределы одного дня и одной комнаты потребует пересмотра
+архитектуры и набора библиотек — текущий выбор сделан под суточный вид и одну
+переговорную. Доменный слой готов: для нескольких комнат достаточно добавить
+`roomId` в фильтрацию пересечений.
 
-1. **Playwright browser e2e** on top of `/api/dev/reset`: the two-tab conflict
-   scenario in particular is verified by hand today. The API handlers already
-   have integration coverage (`tests/server`), so what is missing is the
-   browser layer, not the server one.
-2. **Optimistic updates** in the TanStack Query mutations — the UI currently
-   waits for the server. With rollback on error this would make it feel
-   noticeably faster.
-3. **Drag-to-select an interval** on the timeline instead of clicking a slot.
-4. **A week view** and multiple rooms — the model is deliberately single-room
-   for now, but the domain layer is ready for it (adding `roomId` to the
-   overlap filter is enough).
-5. **i18n**: interface strings are currently inlined in the code.
+## Время
 
-## Time spent
+Около 5 часов: доменный слой с тестами и mock API ≈ 2 ч, интерфейс ≈ 2 ч,
+проверка в браузере, типы, линт и README ≈ 1 ч.
 
-Roughly 5 hours: domain layer with tests and the mock API ≈ 2 h, the interface
-≈ 2 h, browser verification, types, lint and this README ≈ 1 h.
+## Деплой
 
-## Deploy
-
-Nitro detects Vercel automatically — no extra configuration is needed: connect
-the repository, build command `pnpm build`.
+Nitro определяет Vercel автоматически: подключить репозиторий, команда сборки
+`pnpm build`.

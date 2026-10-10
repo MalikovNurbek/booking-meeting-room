@@ -72,12 +72,12 @@ function slotLabel(cell: TimelineFreeSlot): string {
 
 function blockClasses(cell: TimelineBooking): string[] {
 	if (cell.isOngoing) {
-		return ['border-primary/60', 'bg-primary/10']
+		return ['border-primary', 'bg-primary/25']
 	}
 
 	return cell.isPast
-		? ['border-default', 'bg-elevated/60', 'opacity-70']
-		: ['border-default', 'bg-elevated']
+		? ['border-primary/25', 'bg-primary/5', 'opacity-70']
+		: ['border-primary/50', 'bg-primary/15']
 }
 </script>
 
