@@ -16,7 +16,7 @@ The app starts on `http://localhost:3000`. Requires Node ≥ 22 and pnpm ≥ 10.
 
 ```bash
 pnpm test        # 193 tests: domain, schemas, API handlers, utils, components
-pnpm typecheck   # vue-tsc, strict
+pnpm typecheck   # vue-tsc, strict — covers tests too
 pnpm lint        # eslint --fix
 pnpm build       # production build
 ```
