@@ -1,0 +1,55 @@
+{
+	"name": "meeting-room-booking",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"engines": {
+		"node": ">=22"
+	},
+	"packageManager": "pnpm@10.27.0",
+	"scripts": {
+		"dev": "nuxt dev",
+		"build": "nuxt build",
+		"preview": "nuxt preview",
+		"generate": "nuxt generate",
+		"postinstall": "nuxt prepare",
+		"typecheck": "nuxt typecheck",
+		"test": "vitest run",
+		"test:dev": "vitest",
+		"test:coverage": "vitest run --coverage",
+		"lint": "eslint --fix --cache .",
+		"format": "prettier --write \"**/*.{ts,vue,md}\""
+	},
+	"dependencies": {
+		"@internationalized/date": "3.12.4",
+		"@nuxt/ui": "4.8.1",
+		"@tanstack/vue-query": "5.104.1",
+		"@vueuse/core": "14.3.0",
+		"h3": "1.15.11",
+		"nuxt": "4.4.6",
+		"tailwindcss": "4.3.0",
+		"valibot": "1.4.1",
+		"vue": "3.5.35"
+	},
+	"devDependencies": {
+		"@iconify-json/lucide": "1.2.111",
+		"@nuxt/eslint": "1.15.2",
+		"@nuxt/test-utils": "4.0.3",
+		"@vitest/coverage-v8": "4.0.18",
+		"@vue/test-utils": "2.4.10",
+		"eslint": "10.4.1",
+		"happy-dom": "20.9.0",
+		"prettier": "3.8.3",
+		"prettier-plugin-tailwindcss": "0.8.0",
+		"typescript": "5.9.3",
+		"vitest": "4.0.18",
+		"vue-tsc": "3.3.3"
+	},
+	"pnpm": {
+		"onlyBuiltDependencies": [
+			"esbuild",
+			"unrs-resolver",
+			"vue-demi"
+		]
+	}
+}
